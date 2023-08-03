@@ -1,0 +1,276 @@
+---
+title: "Territory size statistical analysis"
+output: html_notebook
+author: "Ruth Simberloff"
+date: "March 2022"
+---
+
+###Set-up
+```{r load_tidyverse, echo=FALSE}
+library(tidyverse)
+library(ggsignif)
+library(car)
+library(fBasics)
+library(ggsignif)
+library(AICcmodavg)
+```
+
+
+We used mean communication distance per bird to prevent the analysis from weighting certain birds more heavily just because they have more amplitude measures.
+
+```{r read_data}
+
+summary_data <- read_csv("model_data.csv")
+
+```
+
+
+Table 1. Summarize the data we collected at each site.
+```{r site_summary_stats}
+
+site_summary <- summary_data %>%
+  group_by(dialect) %>%
+  summarise(n = n(),
+            SY = sum(age=="SY"),
+            median_noise = median(LAF90),
+            range_noise = max(LAF90)-min(LAF90),
+            median_comm_dist = median(comm_distance),
+            mean_body_con = mean(body_condition),
+            median_area = median(area_75))
+
+```
+
+
+
+# Statistical analysis
+
+### Linear model
+
+This model includes   
+- communication distance (25% discrimination distance)
+- mean background noise on territory
+- bird age (SY/ASY)  
+- body condition  
+as possible predictors
+
+
+``` {r candidate_models}
+
+
+candidate_lms <- list()
+
+candidate_lms[[1]] <- lm(area_75 ~comm_distance, data = summary_data)
+
+candidate_lms[[2]] <- lm(area_75 ~comm_distance + age, data = summary_data)
+
+candidate_lms[[3]] <-  lm(area_75 ~comm_distance + body_condition, data = summary_data)
+
+candidate_lms[[4]] <-  lm(area_75 ~comm_distance + LAF90, data = summary_data)
+
+candidate_lms[[5]] <-  lm(area_75 ~comm_distance + age + body_condition, data = summary_data)
+
+candidate_lms[[6]] <-  lm(area_75 ~comm_distance + age + LAF90, data = summary_data)
+
+candidate_lms[[7]] <-  lm(area_75 ~comm_distance + body_condition + LAF90, data = summary_data)
+
+candidate_lms[[8]] <-  lm(area_75 ~comm_distance + age + body_condition + LAF90, data = summary_data)
+
+candidate_lms[[9]] <-  lm(area_75 ~age, data = summary_data)
+
+candidate_lms[[10]] <- lm(area_75 ~age + body_condition, data = summary_data)
+
+candidate_lms[[11]] <-  lm(area_75 ~age + LAF90, data = summary_data)
+
+candidate_lms[[12]] <-  lm(area_75 ~age + body_condition + LAF90, data = summary_data)
+
+candidate_lms[[13]] <-  lm(area_75 ~body_condition, data = summary_data)
+
+candidate_lms[[14]] <-  lm(area_75 ~body_condition + LAF90, data = summary_data)
+
+candidate_lms[[15]] <-  lm(area_75 ~LAF90, data = summary_data)
+
+candidate_lms[[16]] <-  lm(area_75 ~ 1, data = summary_data)
+
+candidate_lm_names <- c("communication distance",
+              "communication distance + age",
+              "communication distance + body condition",
+              "communication distance + noise",
+              "communicaiton distance + age + body condition",
+              "communication distance + age + noise",
+              "communication distance + body condition + noise",
+              "communication distance + age + body condition + noise",
+              "age",
+              "age + body condition",
+              "age + noise",
+              "age + body condition + noise",
+              "body condition",
+              "body condition + noise",
+              "noise",
+              "null")
+```
+
+AICc model selection
+Table A1.
+```{r model_selection}
+
+aictab(candidate_lms, candidate_lm_names)
+
+```
+
+Evaluating the top-ranked model
+```{r top_ranked_model}
+
+plot(candidate_lms[[2]])
+normalTest(resid(candidate_lms[[2]]))
+
+summary(candidate_lms[[2]])
+
+
+```
+
+### Urban/rural comparisons
+
+Urban birds have significantly shorter communication distance.
+```{r UR_comm_distance}
+
+rural_distance <- summary_data %>%
+  dplyr::filter(habitat == "Rural") %>%
+  dplyr::select(comm_distance)
+
+urban_distance <- summary_data %>%
+  dplyr::filter(habitat == "Urban") %>%
+  dplyr::select(comm_distance)
+
+t.test(urban_distance, rural_distance)
+```
+
+Urban birds have significantly smaller territories
+```{r UR_area75}
+
+rural_areas <- summary_data %>%
+  dplyr::filter(habitat == "Rural") %>%
+  dplyr::select(area_75)
+
+urban_areas <- summary_data %>%
+  dplyr::filter(habitat == "Urban") %>%
+  dplyr::select(area_75)
+
+
+## This does a Welch-Satterthwaite two-sample t-test, which compensates for the unequal variances of the two groups.
+## Note that I square-root transform the data so that they're normally distributed
+t.test(sqrt(rural_areas), sqrt(urban_areas))
+
+## comparing differences in means from untransformed data 
+mean(rural_areas$area_75)
+sd(rural_areas$area_75) / sqrt(length(rural_areas$area_75)) # standard error
+
+mean(urban_areas$area_75)
+sd(urban_areas$area_75) / sqrt(length(urban_areas$area_75)) # standard error
+
+# The mean rural territory is is 5440 square meters, while the mean urban territory size is 2328 square meters -- less than half the size.
+```
+
+
+### Background noise is strongly correlated with communication distance
+``` {r noise_comm_distance}
+
+lm(comm_distance ~ LAF90, data = summary_data) %>%
+summary()
+
+```
+
+
+
+Visualization
+
+Figure 2.
+```{r regression_plot}
+
+
+pred <- predict.lm(lm(area_75~comm_distance,  data = summary_data), 
+                   se.fit = TRUE, interval = "confidence")
+limits <- as.data.frame(pred$fit)
+
+
+ggplot( data = summary_data, 
+       mapping = aes(x = comm_distance, 
+                     y = area_75)) +
+   geom_line(aes(x = comm_distance, 
+                y = limits$lwr),
+            linetype = 2, 
+            color = "gray50") +
+  geom_line(aes(x = comm_distance, 
+                y = limits$upr), 
+            linetype = 2, 
+            color = "gray65") +
+  geom_smooth(method = "lm", 
+              color = "black", 
+              fill = NA) +
+  geom_point(size = 1.7, mapping = aes(shape = age), color = "black", fill = "gray80", stroke = .3) +
+  scale_shape_manual(values = c(19, 21)) +
+  labs(
+    shape = "Age",
+      x = "Communication distance", 
+       y = expression(paste("Territory area ", (m^2)))) +
+  theme_linedraw() +
+  coord_cartesian(xlim = c(5, 85))
+  
+```
+
+Figure 3.
+```{r UR_boxplots}
+
+# Figure 3 (a)
+ggplot(data = summary_data, 
+                              mapping = aes(x = habitat, y = comm_distance, fill = habitat)) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_fill_manual(values = c("#0990B0", "#E23C33")) +
+  geom_point(shape = 21, size = 2.4, stroke = .6, alpha = 0.5) +
+  geom_signif(comparisons = list(c("Rural", "Urban")), 
+              map_signif_level = TRUE,
+              tip_length = 0.01) +
+  labs(x = "Habitat type", 
+       y = "Communication distance (m)") +
+  theme_linedraw()
+
+# Figure 3 (b)
+ggplot(data = summary_data, 
+                              mapping = aes(x = habitat, y = area_75, fill = habitat)) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_fill_manual(values = c("#0990B0", "#E23C33")) +
+  geom_point(shape = 21, size = 2.4, stroke = .6, alpha = 0.5) +
+  geom_signif(comparisons = list(c("Rural", "Urban")), 
+              map_signif_level = TRUE,
+              tip_length = 0.01) +
+  labs(x = "Habitat type", 
+       y = expression(paste("Territory area ", (m^2)))) +
+  theme_linedraw()
+
+
+```
+
+
+Figure A3.
+```{r noise_comm_distance_plot}
+pred <- predict.lm(lm(comm_distance~LAF90,  data = summary_data), 
+                   se.fit = TRUE, interval = "confidence")
+limits <- as.data.frame(pred$fit)
+
+ggplot(aes(x = LAF90, y = comm_distance), data = summary_data) +
+  geom_line(aes(x = LAF90, 
+                y = limits$lwr),
+            linetype = 2, 
+            color = "gray50") +
+  geom_line(aes(x = LAF90, 
+                y = limits$upr), 
+            linetype = 2, 
+            color = "gray65") +
+  geom_smooth(method = "lm", 
+              color = "black", 
+              fill = NA) +
+  geom_point(size = 1.7) +
+  labs(x = "Background noise (LAF90; dB)", 
+       y = "Communication distance (m)") +
+  theme_linedraw() 
+
+```
